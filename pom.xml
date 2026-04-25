@@ -19,8 +19,10 @@
 
   <properties>
     <java.version>17</java.version>
-    <jackson.version>2.18.6</jackson.version>
+    <jackson.version>2.21.2</jackson.version>
     <commons-lang3.version>3.18.0</commons-lang3.version>
+    <spring-security.version>6.5.0</spring-security.version>
+    <tomcat.version>10.1.48</tomcat.version>
   </properties>
 
   <dependencies>
@@ -54,6 +56,11 @@
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
       <version>${jackson.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot</artifactId>
+      <version>3.4.10</version>
     </dependency>
     <dependency>
       <groupId>org.springdoc</groupId>
