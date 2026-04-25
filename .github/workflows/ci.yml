@@ -1,0 +1,237 @@
+name: Advanced CI Pipeline (Java Caller)
+
+permissions:
+  contents: write
+  actions: read
+  checks: read
+  security-events: write
+
+on:
+  push:
+    branches: [dev, production]
+  pull_request:
+    branches: [dev, production]
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: 'Docker Hub image name'
+        required: false
+        type: string
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '17'
+      working_directory:
+        description: 'Working directory'
+        required: false
+        type: string
+        default: '.'
+
+env:
+  IMAGE_NAME: ${{ github.event.inputs.image_name || vars.IMAGE_NAME || github.event.repository.name }}
+  JAVA_VERSION: ${{ github.event.inputs.java_version || vars.JAVA_VERSION || '17' }}
+  WORKING_DIRECTORY: ${{ github.event.inputs.working_directory || vars.WORKING_DIRECTORY || '.' }}
+
+jobs:
+
+  # ─────────────────────────────────────────────
+  # PREPARE — Resolve Docker image tag based on branch + commit
+  # ─────────────────────────────────────────────
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      push: ${{ steps.tag.outputs.push }}
+      is_production: ${{ steps.tag.outputs.is_production }}
+      is_dev: ${{ steps.tag.outputs.is_dev }}
+      image_name: ${{ steps.vars.outputs.image_name_lowercase }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set Image Name Lowercase
+        id: vars
+        run: |
+          REPO_NAME="${{ env.IMAGE_NAME }}"
+          echo "image_name_lowercase=${REPO_NAME,,}" >> $GITHUB_OUTPUT
+
+      - name: Resolve Tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref_name }}" == "production" ]]; then
+            # Get latest semver tag or start from v0.0.0
+            latest_tag=$(git tag -l 'v*.*.*' | sort -V | tail -n 1)
+            if [[ -z "$latest_tag" ]]; then
+              latest_tag="v0.0.0"
+            fi
+            echo "Latest tag: $latest_tag"
+
+            # Parse version components
+            version=${latest_tag#v}
+            major=$(echo "$version" | cut -d. -f1)
+            minor=$(echo "$version" | cut -d. -f2)
+            patch=$(echo "$version" | cut -d. -f3)
+
+            # Read commit message for Conventional Commits
+            commit_msg=$(git log -1 --pretty=%B)
+            echo "Commit message: $commit_msg"
+
+            if [[ "$commit_msg" == BREAKING\ CHANGE:* || "$commit_msg" == *"!:"* ]]; then
+              major=$((major + 1))
+              minor=0
+              patch=0
+              echo "Detected BREAKING CHANGE - Major version bump"
+            elif [[ "$commit_msg" == feat:* ]]; then
+              minor=$((minor + 1))
+              patch=0
+              echo "Detected feat - Minor version bump"
+            elif [[ "$commit_msg" == fix:* ]]; then
+              patch=$((patch + 1))
+              echo "Detected fix - Patch version bump"
+            else
+              patch=$((patch + 1))
+              echo "No conventional commits found - Patch version bump"
+            fi
+
+            new_tag="v${major}.${minor}.${patch}"
+            echo "tag=$new_tag" >> $GITHUB_OUTPUT
+            echo "push=true" >> $GITHUB_OUTPUT
+            echo "is_production=true" >> $GITHUB_OUTPUT
+            echo "is_dev=false" >> $GITHUB_OUTPUT
+            echo "New production tag: $new_tag"
+          else
+            short_sha="${GITHUB_SHA::7}"
+            echo "tag=dev-${short_sha}" >> $GITHUB_OUTPUT
+            echo "push=true" >> $GITHUB_OUTPUT
+            echo "is_production=false" >> $GITHUB_OUTPUT
+            echo "is_dev=true" >> $GITHUB_OUTPUT
+            echo "New dev tag: dev-${short_sha}"
+          fi
+
+      - name: Generate Job Summary
+        if: always()
+        run: |
+          echo "## 📋 Prepare Job Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Output | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Tag** | ${{ steps.tag.outputs.tag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Push** | ${{ steps.tag.outputs.push }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Is Production** | ${{ steps.tag.outputs.is_production }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────────
+  # TEST — Run unit tests inline
+  # ─────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: prepare
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Run tests
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: mvn test -B
+
+      - name: Generate Test Report
+        if: always()
+        run: |
+          echo "## 🧪 Test Job Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ job.status }}" == "success" ]]; then
+            echo "✅ All tests passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Tests failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ─────────────────────────────────────────────
+  # SONAR — Reusable SonarQube scan
+  # ─────────────────────────────────────────────
+  sonar:
+    name: SonarQube Scan
+    needs: test
+    uses: Googleeyy/ChapterOne-Reusable-Templates/.github/workflows/_sonar.yml@main
+    with:
+      runtime: java
+      working_directory: ${{ vars.WORKING_DIRECTORY || '.' }}
+      sonar_project_key: ${{ vars.SONAR_PROJECT_KEY || '' }}
+      java_version: ${{ vars.JAVA_VERSION || '17' }}
+    secrets: inherit
+
+  # ─────────────────────────────────────────────
+  # SNYK — Reusable Snyk vulnerability scan
+  # ─────────────────────────────────────────────
+  snyk:
+    name: Snyk Security Scan
+    needs: test
+    uses: Googleeyy/ChapterOne-Reusable-Templates/.github/workflows/_snyk.yml@main
+    with:
+      runtime: java
+      working_directory: ${{ vars.WORKING_DIRECTORY || '.' }}
+      java_version: ${{ vars.JAVA_VERSION || '17' }}
+      severity_threshold: ${{ vars.SNYK_SEVERITY || 'high' }}
+    secrets: inherit
+
+  # ─────────────────────────────────────────────
+  # BUILD + TRIVY — Build Docker image and scan
+  # ─────────────────────────────────────────────
+  build_trivy:
+    name: Build & Trivy Scan
+    needs: [prepare, sonar, snyk]
+    uses: Googleeyy/ChapterOne-Reusable-Templates/.github/workflows/_build_trivy.yml@main
+    with:
+      runtime: java
+      image_name: ${{ needs.prepare.outputs.image_name }}
+      tag: ${{ needs.prepare.outputs.tag }}
+      is_production: ${{ needs.prepare.outputs.is_production }}
+      working_directory: ${{ vars.WORKING_DIRECTORY || '.' }}
+      docker_context: '.'
+      dockerfile_path: 'Dockerfile'
+      java_version: ${{ vars.JAVA_VERSION || '17' }}
+      trivy_severity: ${{ vars.TRIVY_SEVERITY || 'CRITICAL,HIGH' }}
+      trivy_ignore_unfixed: ${{ vars.TRIVY_IGNORE_UNFIXED || 'false' }}
+    secrets: inherit
+
+  # ─────────────────────────────────────────────
+  # PUSH — Push image to Docker Hub
+  # ─────────────────────────────────────────────
+  push:
+    name: Push to Registry
+    needs: [prepare, build_trivy]
+    if: needs.prepare.outputs.push == 'true'
+    uses: Googleeyy/ChapterOne-Reusable-Templates/.github/workflows/_push.yml@main
+    with:
+      image_name: ${{ needs.prepare.outputs.image_name }}
+      tag: ${{ needs.prepare.outputs.tag }}
+      is_production: ${{ needs.prepare.outputs.is_production }}
+      push_dev_images: ${{ vars.PUSH_DEV_IMAGES || 'true' }}
+    secrets: inherit
+
+  # ─────────────────────────────────────────────
+  # NOTIFY — Send email notification
+  # ─────────────────────────────────────────────
+  notify:
+    name: Email Notification
+    needs: [prepare, sonar, snyk, build_trivy, push]
+    if: always()
+    uses: Googleeyy/ChapterOne-Reusable-Templates/.github/workflows/_notify.yml@main
+    with:
+      service_name: ${{ needs.prepare.outputs.image_name }}
+      tag: ${{ needs.prepare.outputs.tag }}
+      pipeline_status: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+    secrets: inherit
