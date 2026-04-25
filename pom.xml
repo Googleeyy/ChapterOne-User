@@ -7,7 +7,7 @@
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
-    <version>3.4.10</version>
+    <version>3.5.14</version>
     <relativePath/>
   </parent>
 
@@ -19,10 +19,6 @@
 
   <properties>
     <java.version>17</java.version>
-    <jackson.version>2.21.2</jackson.version>
-    <commons-lang3.version>3.18.0</commons-lang3.version>
-    <spring-security.version>6.5.0</spring-security.version>
-    <tomcat.version>10.1.48</tomcat.version>
   </properties>
 
   <dependencies>
@@ -46,21 +42,6 @@
       <groupId>org.projectlombok</groupId>
       <artifactId>lombok</artifactId>
       <optional>true</optional>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-core</artifactId>
-      <version>${jackson.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-databind</artifactId>
-      <version>${jackson.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot</artifactId>
-      <version>3.4.10</version>
     </dependency>
     <dependency>
       <groupId>org.springdoc</groupId>
