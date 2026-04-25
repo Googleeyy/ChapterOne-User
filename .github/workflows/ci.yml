@@ -168,7 +168,6 @@ jobs:
     uses: Googleeyy/ChapterOne-Reusable-Templates/.github/workflows/_sonar.yml@main
     with:
       runtime: java
-      working_directory: ${{ vars.WORKING_DIRECTORY || '.' }}
       sonar_project_key: ${{ vars.SONAR_PROJECT_KEY || '' }}
       java_version: ${{ vars.JAVA_VERSION || '17' }}
     secrets: inherit
