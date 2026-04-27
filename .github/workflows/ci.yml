@@ -233,6 +233,8 @@ jobs:
       service-name: user-service
       image-tag: ${{ needs.prepare.outputs.tag }}
       environment: ${{ needs.prepare.outputs.is_production == 'true' && 'production' || 'dev' }}
+      require-approval: ${{ needs.prepare.outputs.is_production == 'true' && true || false }}  
+
     secrets:
       HELM_REPO_PAT: ${{ secrets.HELM_REPO_PAT }}
 
